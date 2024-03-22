@@ -10,11 +10,11 @@
 int posicaoAbs = 0;      ///
 volatile int posRel = 0; ///
 int pulsos = 10000000;   ///
-int freq = 100000;        ///
+int freq = 100000;       ///
 int const coreTask = 0;
 
 int timmerPrescaleValue = 40;
-int timmerConst = 80000000/timmerPrescaleValue ; //| periodo e constante de tempo dos alarmes.
+int timmerConst = 80000000 / timmerPrescaleValue; //| periodo e constante de tempo dos alarmes.
 int timmerSetConst = timmerConst / 2;
 volatile bool FCi = false;
 volatile bool FCs = false;
@@ -56,13 +56,13 @@ void taskMover(void *parameters);
 // MAIN E LOOP
 void setup()
 {
-  //Serial.begin(9600);
+  // Serial.begin(9600);
   setupPins();
   delay(100);
   setupAlarmes();
   delay(100);
   disparaAlarmes();
-  //launchTasks();
+  // launchTasks();
 }
 
 void loop()
@@ -116,16 +116,16 @@ void disparaAlarmes()
 
 void paraAlarmes()
 {
-  //timerAlarmDisable(tempo1);
-  //timerAlarmDisable(tempo2);
-  
+  // timerAlarmDisable(tempo1);
+  // timerAlarmDisable(tempo2);
+
   timerAlarmWrite(tempoSet, timmerSetConst * freq, false);
   timerAlarmDisable(tempoSet);
 }
 
 void IRAM_ATTR alarm1()
 {
-  
+
   // if (operating)
   // {
   //   if (posicaoAbs < pulsos)
@@ -134,11 +134,11 @@ void IRAM_ATTR alarm1()
   //       FC();
   //     else
   //     {
-        GPIO.out_w1ts = ((uint32_t)1 << saidaPulso); //"set"
-        //GPIO.out_w1tc = ((uint32_t)1 << 22); //"clear"
-        //pulsoUp(saidaPulso);
-        posicaoAbs++;
-        posRel++;
+  GPIO.out_w1ts = ((uint32_t)1 << saidaPulso); //"set"
+  // GPIO.out_w1tc = ((uint32_t)1 << 22); //"clear"
+  // pulsoUp(saidaPulso);
+  posicaoAbs++;
+  posRel++;
   //     }
   //   }
   //   else if (posicaoAbs > pulsos)
@@ -160,27 +160,27 @@ void IRAM_ATTR alarm1()
 }
 void IRAM_ATTR alarm2()
 {
-  
+
   // if (operating)
   // {
-    //GPIO.out_w1ts = ((uint32_t)1 << 22); //"set"
-    GPIO.out_w1tc = ((uint32_t)1 << saidaPulso); //"clear"
-    //pulsoDown(saidaPulso);
+  // GPIO.out_w1ts = ((uint32_t)1 << 22); //"set"
+  GPIO.out_w1tc = ((uint32_t)1 << saidaPulso); //"clear"
+                                               // pulsoDown(saidaPulso);
   //}
 }
 void IRAM_ATTR alarmSet()
 {
-  //Serial.print("setCounter:");
-  //Serial.println(setCounter);
+  // Serial.print("setCounter:");
+  // Serial.println(setCounter);
   if (setCounter == 2)
   {
     timerAlarmEnable(tempo1);
-    //setCounter ++;
+    // setCounter ++;
   }
   if (setCounter == 3)
   {
     timerAlarmEnable(tempo2);
-    //setCounter ++;
+    // setCounter ++;
   }
   if (setCounter > 3)
   {
@@ -237,6 +237,6 @@ void setupPins()
 void launchTasks()
 {
   xTaskCreatePinnedToCore(taskMover, "taskMover", 1000, NULL, 1, &tsaida, coreTask);
-  //vTaskDelay(100);
+  // vTaskDelay(100);
 }
 void checkMSG() {}
