@@ -1,54 +1,27 @@
 #include <Arduino.h>
 
 // DEF E VARIAVEIS
-#define saidaX 25         ///
-#define saidaY 26         //|
-#define saidaZ 27         //| Saídas do ESP
-#define dirX 35           //|
-#define dirY 32           //|
-#define dirZ 33           //|
-#define intPin 15         /// interrupt geral
-#define pinFCXi 5         ///
-#define pinFCXs 18        //|
-#define pinFCYi 19        //|fins de curso
-#define pinFCYs 21        //|
-#define pinFCZi 22        //|
-#define pinFCZs 23        ///
-int posX = 0;             ///
-int posY = 0;             //| posições absolutas em: (pulsos de entrada)x2
-int posZ = 0;             ///
-volatile int posXrel = 0; ///
-volatile int posYrel = 0; //| posições relativas ao movimento anterior. utilizado para rampas
-volatile int posZrel = 0; ///
-int pulsosX = 10000000;   ///
-int pulsosY = 10000000;   //| quantidade de pulsos para o proximo movimento. equivale a pulsos de entrada vezes dois
-int pulsosZ = 10000000;   ///
-int freqX = 10000;        ///
-int freqY = 10000;        //| frequencia do alarme que gera os pulsos
-int freqZ = 10000;        ///
-int accRampaX = 1;        // aceleracao da rampa
-int accRampaY = 1;        // aceleracao da rampa
-int accRampaZ = 1;        // aceleracao da rampa
-int freqRampaX = 100;     ///
-int freqRampaY = 100;     //| frequencia de inicio da rampa
-int freqRampaZ = 100;     ///
-int freqStart = 100;
-int tempoRampa = 2; // tempo da rampa em segundos
-int rampaContX = 1;
-int rampaContY = 1;
-int rampaContZ = 1;
-int timmerConstX = 1000000 / freqX; ///
-int timmerConstY = 1000000 / freqY; //| periodo e constante de tempo dos alarmes.
-int timmerConstZ = 1000000 / freqZ; ///
-volatile bool FCXi = false;
-volatile bool FCXs = false;
-volatile bool FCYi = false;
-volatile bool FCYs = false;
-volatile bool FCZi = false;
-volatile bool FCZs = false;
-bool readyX = true;             ///
-bool readyY = true;             //| determina se o eixo esta disponível para movimento
-bool readyZ = true;             ///
+#define saidaPulso 14
+#define saidaDir 35
+#define intPin 15 /// interrupt geral
+#define pinFCi 5  ///
+#define pinFCs 18 //|
+
+int posicaoAbs = 0;      ///
+volatile int posRel = 0; ///
+int pulsos = 10000000;   ///
+int freq = 100000;        ///
+int const coreTask = 0;
+
+int timmerPrescaleValue = 40;
+int timmerConst = 80000000/timmerPrescaleValue ; //| periodo e constante de tempo dos alarmes.
+int timmerSetConst = timmerConst / 2;
+volatile bool FCi = false;
+volatile bool FCs = false;
+volatile int setCounter = 0;
+
+bool ready = true; ///
+
 volatile bool operating = true; // quando false impede que pulsos sejam gerados e posições alteradas pela função de pulso
 bool moving = false;
 bool stopAll = true; // quando atinge o fim de curso para todos os eixos
@@ -56,23 +29,20 @@ bool usarRampa = true;
 int commConst = 1000;
 
 // TIMERS
-hw_timer_t *tempoX = NULL;
-hw_timer_t *tempoY = NULL;
-hw_timer_t *tempoZ = NULL;
+hw_timer_t *tempo1 = NULL;
+hw_timer_t *tempo2 = NULL;
+hw_timer_t *tempoSet = NULL;
 
 // FUNCOES
 void setupAlarmes();
 void disparaAlarmes();
 void paraAlarmes();
-void pulso(int pin);
-void setarRampas();
-void IRAM_ATTR alarmX();
-void IRAM_ATTR alarmY();
-void IRAM_ATTR alarmZ();
+void pulsoUp(int pin);
+void pulsoDown(int pin);
+void IRAM_ATTR alarmSet();
+void IRAM_ATTR alarm1();
+void IRAM_ATTR alarm2();
 void IRAM_ATTR parar();
-void IRAM_ATTR pararX();
-void IRAM_ATTR pararY();
-void IRAM_ATTR pararZ();
 void FC();
 void setupPins();
 void launchTasks();
@@ -86,10 +56,13 @@ void taskMover(void *parameters);
 // MAIN E LOOP
 void setup()
 {
-  Serial.begin(9600);
+  //Serial.begin(9600);
   setupPins();
   delay(100);
-  launchTasks();
+  setupAlarmes();
+  delay(100);
+  disparaAlarmes();
+  //launchTasks();
 }
 
 void loop()
@@ -111,11 +84,10 @@ void taskControle(void *parameters)
 
 void taskMover(void *parameters)
 {
-  posXrel = 0;
-  posYrel = 0;
-  posZrel = 0;
+  posRel = 0;
   paraAlarmes();
   setupAlarmes();
+  delay(100);
   if (operating)
   {
     disparaAlarmes();
@@ -125,149 +97,96 @@ void taskMover(void *parameters)
 
 void setupAlarmes()
 {
-  tempoX = timerBegin(0, 40, true);
-  timerAttachInterrupt(tempoX, &alarmX, true);
-  timerAlarmWrite(tempoX, timmerConstX * freqX, true);
-  tempoY = timerBegin(1, 40, true);
-  timerAttachInterrupt(tempoY, &alarmY, true);
-  timerAlarmWrite(tempoY, timmerConstY * freqY, true);
-  tempoZ = timerBegin(2, 40, true);
-  timerAttachInterrupt(tempoZ, &alarmZ, true);
-  timerAlarmWrite(tempoZ, timmerConstZ * freqZ, true);
+
+  tempoSet = timerBegin(2, timmerPrescaleValue, true);
+  timerAttachInterrupt(tempoSet, &alarmSet, true);
+  timerAlarmWrite(tempoSet, timmerSetConst / freq, true);
+  tempo1 = timerBegin(0, timmerPrescaleValue, true);
+  timerAttachInterrupt(tempo1, &alarm1, true);
+  timerAlarmWrite(tempo1, timmerConst / freq, true);
+  tempo2 = timerBegin(1, timmerPrescaleValue, true);
+  timerAttachInterrupt(tempo2, &alarm2, true);
+  timerAlarmWrite(tempo2, timmerConst / freq, true);
 }
 
 void disparaAlarmes()
 {
-  timerAlarmEnable(tempoX);
-  timerAlarmEnable(tempoY);
-  timerAlarmEnable(tempoZ);
+  timerAlarmEnable(tempoSet);
 }
 
 void paraAlarmes()
 {
-  timerAlarmDisable(tempoX);
-  timerAlarmDisable(tempoY);
-  timerAlarmDisable(tempoZ);
+  //timerAlarmDisable(tempo1);
+  //timerAlarmDisable(tempo2);
+  
+  timerAlarmWrite(tempoSet, timmerSetConst * freq, false);
+  timerAlarmDisable(tempoSet);
 }
 
-void IRAM_ATTR alarmX()
+void IRAM_ATTR alarm1()
 {
-
-  if (operating)
-  {
-    if (posX < pulsosX)
-    {
-      if (FCXs)
-        FC();
-      else
-      {
-        pulso(saidaX);
-        posX++;
-        posXrel++;
-      }
-    }
-    else if (posX > pulsosX)
-    {
-      if (FCXi)
-        FC();
-      else
-      {
-        pulso(saidaX);
-        posX--;
-      }
-    }
-  }
-  else if (digitalRead(saidaX) == HIGH)
-  {
-    if (posX < pulsosX)
-    {
-      pulso(saidaX);
-      posX++;
-    }
-    else if (posX > pulsosX)
-    {
-      pulso(saidaX);
-      posX--;
-    }
-  }
+  
+  // if (operating)
+  // {
+  //   if (posicaoAbs < pulsos)
+  //   {
+  //     if (FCs)
+  //       FC();
+  //     else
+  //     {
+        GPIO.out_w1ts = ((uint32_t)1 << saidaPulso); //"set"
+        //GPIO.out_w1tc = ((uint32_t)1 << 22); //"clear"
+        //pulsoUp(saidaPulso);
+        posicaoAbs++;
+        posRel++;
+  //     }
+  //   }
+  //   else if (posicaoAbs > pulsos)
+  //   {
+  //     if (FCi)
+  //       FC();
+  //     else
+  //     {
+  //       pulsoUp(saidaPulso);
+  //       posicaoAbs--;
+  //       posRel--;
+  //     }
+  //   }
+  //   else
+  //   {
+  //     paraAlarmes();
+  //   }
+  // }
 }
-void IRAM_ATTR alarmY()
+void IRAM_ATTR alarm2()
 {
-  if (operating)
-  {
-    if (posY < pulsosY)
-    {
-      if (FCYs)
-        FC();
-      else
-      {
-        pulso(saidaY);
-        posY++;
-      }
-    }
-    if (posY > pulsosY)
-    {
-      if (FCYi)
-        FC();
-      else
-      {
-        pulso(saidaY);
-        posY--;
-      }
-    }
-  }
-  else if (digitalRead(saidaY) == HIGH)
-  {
-    if (posY < pulsosY)
-    {
-      pulso(saidaY);
-      posY++;
-    }
-    if (posY > pulsosY)
-    {
-      pulso(saidaY);
-      posY--;
-    }
-  }
+  
+  // if (operating)
+  // {
+    //GPIO.out_w1ts = ((uint32_t)1 << 22); //"set"
+    GPIO.out_w1tc = ((uint32_t)1 << saidaPulso); //"clear"
+    //pulsoDown(saidaPulso);
+  //}
 }
-void IRAM_ATTR alarmZ()
+void IRAM_ATTR alarmSet()
 {
-  if (operating)
+  //Serial.print("setCounter:");
+  //Serial.println(setCounter);
+  if (setCounter == 2)
   {
-    if (posZ < pulsosZ)
-    {
-      if (FCZs)
-        FC();
-      else
-      {
-        pulso(saidaZ);
-        posZ++;
-      }
-    }
-    if (posZ > pulsosZ)
-    {
-      if (FCZi)
-        FC();
-      else
-      {
-        pulso(saidaZ);
-        posZ--;
-      }
-    }
+    timerAlarmEnable(tempo1);
+    //setCounter ++;
   }
-  else if (digitalRead(saidaZ) == HIGH)
+  if (setCounter == 3)
   {
-    if (posZ < pulsosZ)
-    {
-      pulso(saidaZ);
-      posZ++;
-    }
-    if (posZ > pulsosZ)
-    {
-      pulso(saidaZ);
-      posZ--;
-    }
+    timerAlarmEnable(tempo2);
+    //setCounter ++;
   }
+  if (setCounter > 3)
+  {
+    paraAlarmes();
+  }
+  setCounter++;
 }
 
 void IRAM_ATTR parar()
@@ -276,34 +195,14 @@ void IRAM_ATTR parar()
   paraAlarmes();
 }
 
-void IRAM_ATTR pararXi()
+void IRAM_ATTR pararI()
 {
-  FCXi = false;
+  FCi = false;
 }
 
-void IRAM_ATTR pararXs()
+void IRAM_ATTR pararS()
 {
-  FCXs = false;
-}
-
-void IRAM_ATTR pararYi()
-{
-  FCYi = false;
-}
-
-void IRAM_ATTR pararYs()
-{
-  FCYs = false;
-}
-
-void IRAM_ATTR pararZi()
-{
-  FCZi = false;
-}
-
-void IRAM_ATTR pararZs()
-{
-  FCZs = false;
+  FCs = false;
 }
 
 void FC()
@@ -314,43 +213,30 @@ void FC()
   }
 }
 
-void pulso(int pin)
+void pulsoUp(int pin)
 {
-  digitalWrite(pin, !digitalRead(pin));
+  digitalWrite(pin, HIGH);
 }
 
-void setarRampas()
+void pulsoDown(int pin)
 {
-  int rampaContX = 1;
-  int rampaContY = 1;
-  int rampaContZ = 1;
+  digitalWrite(pin, LOW);
 }
 
 void setupPins()
 {
   attachInterrupt(intPin, parar, FALLING);
-  attachInterrupt(pinFCXi, pararXi, FALLING);
-  attachInterrupt(pinFCXs, pararXs, FALLING);
-  attachInterrupt(pinFCYi, pararYi, FALLING);
-  attachInterrupt(pinFCYs, pararYs, FALLING);
-  attachInterrupt(pinFCZi, pararZi, FALLING);
-  attachInterrupt(pinFCZs, pararZs, FALLING);
-  pinMode(saidaX, OUTPUT);
-  pinMode(saidaY, OUTPUT);
-  pinMode(saidaZ, OUTPUT);
-  digitalWrite(saidaX, LOW);
-  digitalWrite(saidaY, LOW);
-  digitalWrite(saidaZ, LOW);
-  pinMode(dirX, OUTPUT);
-  pinMode(dirY, OUTPUT);
-  pinMode(dirZ, OUTPUT);
-  digitalWrite(dirX, LOW);
-  digitalWrite(dirY, LOW);
-  digitalWrite(dirZ, LOW);
+  attachInterrupt(pinFCi, pararI, FALLING);
+  attachInterrupt(pinFCs, pararS, FALLING);
+  pinMode(saidaPulso, OUTPUT);
+  digitalWrite(saidaPulso, LOW);
+  pinMode(saidaDir, OUTPUT);
+  digitalWrite(saidaDir, LOW);
   delay(100);
 }
 void launchTasks()
 {
-  vTaskDelay(100);
+  xTaskCreatePinnedToCore(taskMover, "taskMover", 1000, NULL, 1, &tsaida, coreTask);
+  //vTaskDelay(100);
 }
 void checkMSG() {}
